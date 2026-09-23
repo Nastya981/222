@@ -1,198 +1,269 @@
-from django.shortcuts import render, redirect, get_object_or_404
+from typing import Type
+
 from django.contrib import messages
-from django.core.mail import send_mail
-from django.conf import settings
-from django.utils import timezone
-from .models import Recipient, Message, Mailing, Attempt
-from .forms import RecipientForm, MessageForm, MailingForm
+from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
+from django.core.exceptions import ValidationError
+from django.db.models import Model, QuerySet
+from django.forms import ModelForm
+from django.http import HttpRequest, HttpResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_POST
+
+from mailing.forms import MailingForm, MessageForm, RecipientForm
+from mailing.models import Mailing, Message, Recipient
+from mailing.services import send_mailing
 
 
-def home(request):
-    """Главная страница со статистикой"""
-    total_mailings = Mailing.objects.count()
-    active_mailings = Mailing.objects.filter(
-        start_time__lte=timezone.now(),
-        end_time__gte=timezone.now(),
-        status='Запущена'
-    ).count()
-    unique_recipients = Recipient.objects.count()
+def is_manager(user) -> bool:
+    return user.groups.filter(name="Менеджеры").exists()
 
-    context = {
-        'total_mailings': total_mailings,
-        'active_mailings': active_mailings,
-        'unique_recipients': unique_recipients,
+
+def visible_objects(model: Type[Model], user) -> QuerySet:
+    queryset = model.objects.all()
+    if is_manager(user):
+        return queryset
+    return queryset.filter(owner=user)
+
+
+def clear_stats_cache() -> None:
+    cache.clear()
+
+
+@login_required
+def home(request: HttpRequest) -> HttpResponse:
+    cache_key = f"home-stats:{request.user.pk}:{int(is_manager(request.user))}"
+    context = cache.get(cache_key)
+
+    if context is None:
+        mailings = visible_objects(Mailing, request.user)
+        recipients = visible_objects(Recipient, request.user)
+        context = {
+            "total_mailings": mailings.count(),
+            "active_mailings": mailings.filter(status=Mailing.STARTED).count(),
+            "unique_recipients": recipients.count(),
+        }
+        cache.set(cache_key, context, timeout=60)
+
+    return render(request, "mailing/home.html", context)
+
+
+def edit_object(
+    request: HttpRequest,
+    *,
+    model: Type[Model],
+    form_class: Type[ModelForm],
+    success_url: str,
+    title: str,
+    pk: int | None = None,
+) -> HttpResponse:
+    instance = None
+    if pk is not None:
+        instance = get_object_or_404(model, pk=pk, owner=request.user)
+
+    kwargs = {
+        "data": request.POST or None,
+        "instance": instance,
     }
-    return render(request, 'mailing/home.html', context)
+    if form_class is MailingForm:
+        kwargs["user"] = request.user
+
+    form = form_class(**kwargs)
+    if request.method == "POST" and form.is_valid():
+        obj = form.save(commit=False)
+        if instance is None:
+            obj.owner = request.user
+        obj.save()
+        form.save_m2m()
+        clear_stats_cache()
+        messages.success(request, "Изменения сохранены.")
+        return redirect(success_url)
+
+    return render(request, "mailing/form.html", {"form": form, "title": title})
 
 
-# === Получатели ===
+def delete_object(
+    request: HttpRequest,
+    *,
+    model: Type[Model],
+    success_url: str,
+    pk: int,
+) -> HttpResponse:
+    obj = get_object_or_404(model, pk=pk, owner=request.user)
+    if request.method == "POST":
+        obj.delete()
+        clear_stats_cache()
+        messages.success(request, "Объект удалён.")
+        return redirect(success_url)
 
+    return render(request, "mailing/confirm_delete.html", {"object": obj})
+
+
+@login_required
 def recipient_list(request):
-    recipients = Recipient.objects.all()
-    return render(request, 'mailing/recipient_list.html', {'recipients': recipients})
+    return render(
+        request,
+        "mailing/object_list.html",
+        {
+            "title": "Получатели",
+            "objects": visible_objects(Recipient, request.user),
+            "create_url": "mailing:recipient_create",
+            "update_url": "mailing:recipient_update",
+            "delete_url": "mailing:recipient_delete",
+        },
+    )
 
 
+@login_required
 def recipient_create(request):
-    if request.method == 'POST':
-        form = RecipientForm(request.POST)
-        if form.is_valid():
-            form.save()
-            messages.success(request, 'Получатель добавлен')
-            return redirect('mailing:recipient_list')
-    else:
-        form = RecipientForm()
-    return render(request, 'mailing/recipient_form.html', {'form': form, 'title': 'Добавить получателя'})
+    return edit_object(
+        request,
+        model=Recipient,
+        form_class=RecipientForm,
+        success_url="mailing:recipient_list",
+        title="Добавить получателя",
+    )
 
 
+@login_required
 def recipient_update(request, pk):
-    recipient = get_object_or_404(Recipient, pk=pk)
-    if request.method == 'POST':
-        form = RecipientForm(request.POST, instance=recipient)
-        if form.is_valid():
-            form.save()
-            messages.success(request, 'Получатель обновлён')
-            return redirect('mailing:recipient_list')
-    else:
-        form = RecipientForm(instance=recipient)
-    return render(request, 'mailing/recipient_form.html', {'form': form, 'title': 'Редактировать получателя'})
+    return edit_object(
+        request,
+        model=Recipient,
+        form_class=RecipientForm,
+        success_url="mailing:recipient_list",
+        title="Изменить получателя",
+        pk=pk,
+    )
 
 
+@login_required
 def recipient_delete(request, pk):
-    recipient = get_object_or_404(Recipient, pk=pk)
-    if request.method == 'POST':
-        recipient.delete()
-        messages.success(request, 'Получатель удалён')
-        return redirect('mailing:recipient_list')
-    return render(request, 'mailing/recipient_confirm_delete.html', {'recipient': recipient})
+    return delete_object(
+        request,
+        model=Recipient,
+        success_url="mailing:recipient_list",
+        pk=pk,
+    )
 
 
-# === Сообщения ===
-
+@login_required
 def message_list(request):
-    messages_list = Message.objects.all()
-    return render(request, 'mailing/message_list.html', {'messages': messages_list})
+    return render(
+        request,
+        "mailing/object_list.html",
+        {
+            "title": "Сообщения",
+            "objects": visible_objects(Message, request.user),
+            "create_url": "mailing:message_create",
+            "update_url": "mailing:message_update",
+            "delete_url": "mailing:message_delete",
+        },
+    )
 
 
+@login_required
 def message_create(request):
-    if request.method == 'POST':
-        form = MessageForm(request.POST)
-        if form.is_valid():
-            form.save()
-            messages.success(request, 'Сообщение добавлено')
-            return redirect('mailing:message_list')
-    else:
-        form = MessageForm()
-    return render(request, 'mailing/message_form.html', {'form': form, 'title': 'Добавить сообщение'})
+    return edit_object(
+        request,
+        model=Message,
+        form_class=MessageForm,
+        success_url="mailing:message_list",
+        title="Добавить сообщение",
+    )
 
 
+@login_required
 def message_update(request, pk):
-    message = get_object_or_404(Message, pk=pk)
-    if request.method == 'POST':
-        form = MessageForm(request.POST, instance=message)
-        if form.is_valid():
-            form.save()
-            messages.success(request, 'Сообщение обновлено')
-            return redirect('mailing:message_list')
-    else:
-        form = MessageForm(instance=message)
-    return render(request, 'mailing/message_form.html', {'form': form, 'title': 'Редактировать сообщение'})
+    return edit_object(
+        request,
+        model=Message,
+        form_class=MessageForm,
+        success_url="mailing:message_list",
+        title="Изменить сообщение",
+        pk=pk,
+    )
 
 
+@login_required
 def message_delete(request, pk):
-    message = get_object_or_404(Message, pk=pk)
-    if request.method == 'POST':
-        message.delete()
-        messages.success(request, 'Сообщение удалено')
-        return redirect('mailing:message_list')
-    return render(request, 'mailing/message_confirm_delete.html', {'message': message})
+    return delete_object(
+        request,
+        model=Message,
+        success_url="mailing:message_list",
+        pk=pk,
+    )
 
 
-# === Рассылки ===
-
+@login_required
 def mailing_list(request):
-    mailings = Mailing.objects.all()
-    return render(request, 'mailing/mailing_list.html', {'mailings': mailings})
+    return render(
+        request,
+        "mailing/object_list.html",
+        {
+            "title": "Рассылки",
+            "objects": visible_objects(Mailing, request.user),
+            "create_url": "mailing:mailing_create",
+            "detail_url": "mailing:mailing_detail",
+            "update_url": "mailing:mailing_update",
+            "delete_url": "mailing:mailing_delete",
+        },
+    )
 
 
+@login_required
 def mailing_detail(request, pk):
-    mailing = get_object_or_404(Mailing, pk=pk)
+    mailing = get_object_or_404(visible_objects(Mailing, request.user), pk=pk)
     mailing.update_status()
-    return render(request, 'mailing/mailing_detail.html', {'mailing': mailing})
+    return render(request, "mailing/mailing_detail.html", {"mailing": mailing})
 
 
+@login_required
 def mailing_create(request):
-    if request.method == 'POST':
-        form = MailingForm(request.POST)
-        if form.is_valid():
-            form.save()
-            messages.success(request, 'Рассылка создана')
-            return redirect('mailing:mailing_list')
-    else:
-        form = MailingForm()
-    return render(request, 'mailing/mailing_form.html', {'form': form, 'title': 'Создать рассылку'})
+    return edit_object(
+        request,
+        model=Mailing,
+        form_class=MailingForm,
+        success_url="mailing:mailing_list",
+        title="Создать рассылку",
+    )
 
 
+@login_required
 def mailing_update(request, pk):
-    mailing = get_object_or_404(Mailing, pk=pk)
-    if request.method == 'POST':
-        form = MailingForm(request.POST, instance=mailing)
-        if form.is_valid():
-            form.save()
-            messages.success(request, 'Рассылка обновлена')
-            return redirect('mailing:mailing_list')
-    else:
-        form = MailingForm(instance=mailing)
-    return render(request, 'mailing/mailing_form.html', {'form': form, 'title': 'Редактировать рассылку'})
+    return edit_object(
+        request,
+        model=Mailing,
+        form_class=MailingForm,
+        success_url="mailing:mailing_list",
+        title="Изменить рассылку",
+        pk=pk,
+    )
 
 
+@login_required
 def mailing_delete(request, pk):
-    mailing = get_object_or_404(Mailing, pk=pk)
-    if request.method == 'POST':
-        mailing.delete()
-        messages.success(request, 'Рассылка удалена')
-        return redirect('mailing:mailing_list')
-    return render(request, 'mailing/mailing_confirm_delete.html', {'mailing': mailing})
+    return delete_object(
+        request,
+        model=Mailing,
+        success_url="mailing:mailing_list",
+        pk=pk,
+    )
 
 
+@login_required
+@require_POST
 def mailing_send(request, pk):
-    """Отправка рассылки по требованию"""
-    mailing = get_object_or_404(Mailing, pk=pk)
-    now = timezone.now()
+    mailing = get_object_or_404(Mailing, pk=pk, owner=request.user)
+    try:
+        success_count, fail_count = send_mailing(mailing)
+    except ValidationError as error:
+        messages.error(request, error.message)
+    else:
+        messages.success(
+            request,
+            f"Отправлено: {success_count}, ошибок: {fail_count}",
+        )
+        clear_stats_cache()
 
-    if not (mailing.start_time <= now <= mailing.end_time):
-        messages.error(request, 'Отправка невозможна: текущее время вне диапазона рассылки')
-        return redirect('mailing:mailing_detail', pk=pk)
-
-    recipients = mailing.recipients.all()
-    if not recipients:
-        messages.warning(request, 'У рассылки нет получателей')
-        return redirect('mailing:mailing_detail', pk=pk)
-
-    success_count = 0
-    fail_count = 0
-
-    for recipient in recipients:
-        try:
-            send_mail(
-                subject=mailing.message.subject,
-                message=mailing.message.body,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[recipient.email],
-                fail_silently=False,
-            )
-            Attempt.objects.create(
-                status='Успешно',
-                server_response='OK',
-                mailing=mailing
-            )
-            success_count += 1
-        except Exception as e:
-            Attempt.objects.create(
-                status='Не успешно',
-                server_response=str(e),
-                mailing=mailing
-            )
-            fail_count += 1
-
-    messages.success(request, f'Отправлено: {success_count}, ошибок: {fail_count}')
-    return redirect('mailing:mailing_detail', pk=pk)
+    return redirect("mailing:mailing_detail", pk=pk)

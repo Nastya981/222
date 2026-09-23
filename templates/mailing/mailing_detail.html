@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ mailing }}</h1>
+<p>Статус: {{ mailing.get_status_display }}</p>
+<p>Начало: {{ mailing.start_time }}</p>
+<p>Окончание: {{ mailing.end_time }}</p>
+
+{% if mailing.owner_id == request.user.id %}
+<form method="post"
+      action="{% url 'mailing:mailing_send' mailing.pk %}">
+    {% csrf_token %}
+    <button type="submit">Отправить</button>
+</form>
+{% endif %}
+{% endblock %}
