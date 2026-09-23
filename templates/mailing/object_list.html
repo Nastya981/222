@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<a href="{% url create_url %}">Создать</a>
+<ul>
+    {% for object in objects %}
+        <li>
+            {% if detail_url %}
+                <a href="{% url detail_url object.pk %}">
+                    {{ object }}
+                </a>
+            {% else %}
+                {{ object }}
+            {% endif %}
+
+            {% if object.owner_id == request.user.id %}
+                <a href="{% url update_url object.pk %}">Изменить</a>
+                <a href="{% url delete_url object.pk %}">Удалить</a>
+            {% endif %}
+        </li>
+    {% empty %}
+        <li>Список пуст.</li>
+    {% endfor %}
+</ul>
+{% endblock %}

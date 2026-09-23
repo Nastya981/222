@@ -1,37 +1,45 @@
 from django import forms
-from .models import Recipient, Message, Mailing
+
+from mailing.models import Mailing, Message, Recipient
 
 
 class RecipientForm(forms.ModelForm):
     class Meta:
         model = Recipient
-        fields = ('email', 'full_name', 'comment')
+        fields = ("email", "full_name", "comment")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
-            field.widget.attrs.update({'class': 'form-control'})
+            field.widget.attrs.update({"class": "form-control"})
 
 
 class MessageForm(forms.ModelForm):
     class Meta:
         model = Message
-        fields = ('subject', 'body')
+        fields = ("subject", "body")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for field in self.fields.values():
-            field.widget.attrs.update({'class': 'form-control'})
+            field.widget.attrs.update({"class": "form-control"})
 
 
 class MailingForm(forms.ModelForm):
     class Meta:
         model = Mailing
-        fields = ('start_time', 'end_time', 'message', 'recipients')
+        fields = ("start_time", "end_time", "message", "recipients")
+        widgets = {
+            "start_time": forms.DateTimeInput(attrs={"type": "datetime-local"}),
+            "end_time": forms.DateTimeInput(attrs={"type": "datetime-local"}),
+        }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
+
         for field in self.fields.values():
-            field.widget.attrs.update({'class': 'form-control'})
-        # Для поля с множественным выбором
-        self.fields['recipients'].widget.attrs.update({'class': 'form-control', 'size': 10})
+            field.widget.attrs["class"] = "form-control"
+
+        if user is not None:
+            self.fields["message"].queryset = Message.objects.filter(owner=user)
+            self.fields["recipients"].queryset = Recipient.objects.filter(owner=user)
