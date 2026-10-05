@@ -29,6 +29,8 @@ class UserManager(BaseUserManager):
 class User(AbstractBaseUser, PermissionsMixin):
     """Модель пользователя с авторизацией по email"""
     email = models.EmailField(unique=True, verbose_name='Email')
+    first_name = models.CharField(max_length=150, blank=True, verbose_name='Имя')
+    last_name = models.CharField(max_length=150, blank=True, verbose_name='Фамилия')
     phone = models.CharField(max_length=20, blank=True, null=True, verbose_name='Телефон')
     city = models.CharField(max_length=100, blank=True, null=True, verbose_name='Город')
     avatar = models.ImageField(upload_to='users/avatars/', blank=True, null=True, verbose_name='Аватар')
@@ -47,3 +49,50 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+class Payment(models.Model):
+    """Модель платежа"""
+    CASH = 'cash'
+    TRANSFER = 'transfer'
+
+    PAYMENT_METHOD_CHOICES = [
+        (CASH, 'Наличные'),
+        (TRANSFER, 'Перевод на счет'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='payments',
+        verbose_name='Пользователь',
+    )
+    payment_date = models.DateTimeField(verbose_name='Дата оплаты')
+    course = models.ForeignKey(
+        'lms.Course',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payments',
+        verbose_name='Оплаченный курс',
+    )
+    lesson = models.ForeignKey(
+        'lms.Lesson',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payments',
+        verbose_name='Оплаченный урок',
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Сумма оплаты')
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PAYMENT_METHOD_CHOICES,
+        verbose_name='Способ оплаты',
+    )
+
+    class Meta:
+        verbose_name = 'Платеж'
+        verbose_name_plural = 'Платежи'
+        ordering = ['-payment_date']
+
+    def __str__(self):
+        return f'{self.user.email} - {self.amount} ({self.get_payment_method_display()})'
