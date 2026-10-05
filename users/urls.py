@@ -3,7 +3,11 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from users import views
-from users.views import UserViewSet, PaymentViewSet
+from users.views import (
+    UserViewSet, PaymentViewSet,
+    MyTokenObtainPairView, MyTokenRefreshView,
+    UserCreateAPIView,
+)
 
 app_name = "users"
 
@@ -12,7 +16,17 @@ router.register(r'users', UserViewSet, basename='user')
 router.register(r'payments', PaymentViewSet, basename='payment')
 
 urlpatterns = [
+    # --- DRF ViewSet'ы (users/, payments/) ---
     path("", include(router.urls)),
+
+    # --- JWT ---
+    path("api/login/", MyTokenObtainPairView.as_view(), name="api-login"),
+    path("api/token/refresh/", MyTokenRefreshView.as_view(), name="api-token-refresh"),
+
+    # --- API-регистрация (JSON) ---
+    path("api/register/", UserCreateAPIView.as_view(), name="api-register"),
+
+    # --- HTML-регистрация и активация ---
     path("register/", views.register, name="register"),
     path("activate/<uidb64>/<token>/", views.activate, name="activate"),
     path(
