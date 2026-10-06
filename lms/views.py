@@ -1,4 +1,6 @@
 ﻿from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from datetime import timedelta
 
 from rest_framework import viewsets, generics, status
 from rest_framework.permissions import IsAuthenticated
@@ -29,6 +31,20 @@ class CourseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
+
+    def perform_update(self, serializer):
+        course = self.get_object()
+        now = timezone.now()
+        can_notify = (
+            course.updated_at is None
+            or (now - course.updated_at) > timedelta(hours=4)
+        )
+
+        instance = serializer.save()
+
+        if can_notify:
+            from .tasks import send_course_update_email
+            send_course_update_email.delay(instance.id)
 
 
 class LessonListCreateView(generics.ListCreateAPIView):
