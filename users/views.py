@@ -2,12 +2,15 @@
 from django.core.mail import send_mail
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
-from django.shortcuts import redirect, render
+from django.shortcuts import redirect, render, get_object_or_404
 from django.urls import reverse
 from django.conf import settings
+from django.utils import timezone
 
-from rest_framework import viewsets, generics, permissions
+from rest_framework import viewsets, generics, permissions, status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import OrderingFilter
@@ -19,8 +22,10 @@ from .serializers import (
     PublicUserSerializer,
     PrivateUserSerializer,
     PaymentSerializer,
+    PaymentCreateSerializer,
 )
 from .permissions import IsOwner
+from . import services
 
 
 # ============================================================
@@ -76,7 +81,6 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return UserCreateSerializer
         if self.action == 'retrieve':
-            # если запрашивают свой профиль — полный, чужой — публичный
             if self.kwargs.get('pk') == str(self.request.user.pk):
                 return PrivateUserSerializer
             return PublicUserSerializer
@@ -84,7 +88,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
-# Платежи (только чтение своих)
+# Платежи
 # ============================================================
 
 class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
@@ -97,6 +101,92 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return Payment.objects.filter(user=self.request.user)
+
+
+class PaymentCreateAPIView(APIView):
+    """
+    Создание платежа для курса через Stripe.
+    POST /api/users/payments/create/  { "course_id": 1 }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = PaymentCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        course_id = serializer.validated_data['course_id']
+
+        from lms.models import Course
+        course = get_object_or_404(Course, id=course_id)
+
+        # Сумма в копейках. Берём фиксированную цену или цену из курса, если добавите поле price
+        amount_rub = 1000
+        amount_kopecks = amount_rub * 100
+
+        # 1. Продукт
+        product = services.create_stripe_product(name=course.name)
+
+        # 2. Цена
+        price = services.create_stripe_price(product_id=product.id, amount=amount_kopecks)
+
+        # 3. Сессия
+        success_url = request.build_absolute_uri('/api/users/payments/success/')
+        session = services.create_stripe_session(price_id=price.id, success_url=success_url)
+
+        # 4. Сохраняем Payment
+        payment = Payment.objects.create(
+            user=request.user,
+            payment_date=timezone.now(),
+            course=course,
+            amount=amount_rub,
+            payment_method=Payment.TRANSFER,
+            stripe_product_id=product.id,
+            stripe_price_id=price.id,
+            stripe_session_id=session.id,
+            payment_link=session.url,
+            status='pending',
+        )
+
+        return Response(
+            {
+                'payment_id': payment.id,
+                'payment_link': payment.payment_link,
+                'session_id': payment.stripe_session_id,
+                'status': payment.status,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PaymentStatusAPIView(APIView):
+    """
+    Проверка статуса платежа через Stripe Session Retrieve.
+    GET /api/users/payments/<payment_id>/status/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk, *args, **kwargs):
+        payment = get_object_or_404(Payment, id=pk, user=request.user)
+
+        if not payment.stripe_session_id:
+            return Response(
+                {'error': 'У платежа нет Stripe-сессии.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = services.retrieve_stripe_session(payment.stripe_session_id)
+
+        payment.status = session.payment_status  # 'unpaid' / 'paid' / 'no_payment_required'
+        payment.save(update_fields=['status'])
+
+        return Response(
+            {
+                'payment_id': payment.id,
+                'stripe_session_id': payment.stripe_session_id,
+                'status': payment.status,
+                'payment_link': payment.payment_link,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 # ============================================================

@@ -20,8 +20,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'rest_framework_simplejwt',      # ← ДОБАВИЛИ
+    'rest_framework_simplejwt',
     'django_filters',
+    'drf_spectacular',
     'users',
     'lms',
     'mailing',
@@ -95,11 +96,9 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@example.com')
 
 # === DRF ===
 REST_FRAMEWORK = {
-    # Глобально — JWT-аутентификация
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
-    # Глобально — только авторизованные (открытые эндпоинты пометим AllowAny)
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
@@ -107,6 +106,7 @@ REST_FRAMEWORK = {
         'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.OrderingFilter',
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 
@@ -131,3 +131,17 @@ CACHES = {
 LOGIN_URL = "users:login"
 LOGIN_REDIRECT_URL = "mailing:home"
 LOGOUT_REDIRECT_URL = "users:login"
+
+
+# === Stripe ===
+STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY')
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY')
+
+
+# === drf-spectacular ===
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'LMS API',
+    'DESCRIPTION': 'API для учебного проекта LMS',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+}

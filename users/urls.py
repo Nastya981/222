@@ -4,9 +4,13 @@ from rest_framework.routers import DefaultRouter
 
 from users import views
 from users.views import (
-    UserViewSet, PaymentViewSet,
-    MyTokenObtainPairView, MyTokenRefreshView,
+    UserViewSet,
+    PaymentViewSet,
+    MyTokenObtainPairView,
+    MyTokenRefreshView,
     UserCreateAPIView,
+    PaymentCreateAPIView,
+    PaymentStatusAPIView,
 )
 
 app_name = "users"
@@ -16,17 +20,18 @@ router.register(r'users', UserViewSet, basename='user')
 router.register(r'payments', PaymentViewSet, basename='payment')
 
 urlpatterns = [
-    # --- DRF ViewSet'ы (users/, payments/) ---
-    path("", include(router.urls)),
+    # Специфичные пути ДО include(router.urls)
+    path("payments/create/", PaymentCreateAPIView.as_view(), name="payment-create"),
+    path("payments/<int:pk>/status/", PaymentStatusAPIView.as_view(), name="payment-status"),
 
-    # --- JWT ---
+    # JWT
     path("api/login/", MyTokenObtainPairView.as_view(), name="api-login"),
     path("api/token/refresh/", MyTokenRefreshView.as_view(), name="api-token-refresh"),
 
-    # --- API-регистрация (JSON) ---
+    # API-регистрация
     path("api/register/", UserCreateAPIView.as_view(), name="api-register"),
 
-    # --- HTML-регистрация и активация ---
+    # HTML-регистрация и активация
     path("register/", views.register, name="register"),
     path("activate/<uidb64>/<token>/", views.activate, name="activate"),
     path(
@@ -38,39 +43,7 @@ urlpatterns = [
         name="login",
     ),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
-    path(
-        "password-reset/",
-        auth_views.PasswordResetView.as_view(
-            template_name="users/form.html",
-            email_template_name="users/password_reset_email.txt",
-            success_url="/accounts/password-reset/done/",
-            extra_context={"title": "Восстановление пароля"},
-        ),
-        name="password_reset",
-    ),
-    path(
-        "password-reset/done/",
-        auth_views.PasswordResetDoneView.as_view(
-            template_name="users/message.html",
-            extra_context={"message": "Письмо для восстановления отправлено."},
-        ),
-        name="password_reset_done",
-    ),
-    path(
-        "reset/<uidb64>/<token>/",
-        auth_views.PasswordResetConfirmView.as_view(
-            template_name="users/form.html",
-            success_url="/accounts/reset/done/",
-            extra_context={"title": "Новый пароль"},
-        ),
-        name="password_reset_confirm",
-    ),
-    path(
-        "reset/done/",
-        auth_views.PasswordResetCompleteView.as_view(
-            template_name="users/message.html",
-            extra_context={"message": "Пароль успешно изменён."},
-        ),
-        name="password_reset_complete",
-    ),
+
+    # Роутер — в конце
+    path("", include(router.urls)),
 ]

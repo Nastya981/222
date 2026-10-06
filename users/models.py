@@ -49,6 +49,8 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+
 class Payment(models.Model):
     """Модель платежа"""
     CASH = 'cash'
@@ -57,6 +59,12 @@ class Payment(models.Model):
     PAYMENT_METHOD_CHOICES = [
         (CASH, 'Наличные'),
         (TRANSFER, 'Перевод на счет'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Ожидает оплаты'),
+        ('paid', 'Оплачен'),
+        ('failed', 'Ошибка'),
     ]
 
     user = models.ForeignKey(
@@ -87,6 +95,18 @@ class Payment(models.Model):
         max_length=20,
         choices=PAYMENT_METHOD_CHOICES,
         verbose_name='Способ оплаты',
+    )
+
+    # Stripe
+    stripe_product_id = models.CharField(max_length=255, blank=True, null=True, verbose_name='ID продукта Stripe')
+    stripe_price_id = models.CharField(max_length=255, blank=True, null=True, verbose_name='ID цены Stripe')
+    stripe_session_id = models.CharField(max_length=255, blank=True, null=True, verbose_name='ID сессии Stripe')
+    payment_link = models.URLField(max_length=500, blank=True, null=True, verbose_name='Ссылка на оплату')
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        verbose_name='Статус',
     )
 
     class Meta:

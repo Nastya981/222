@@ -21,12 +21,11 @@ class PrivateUserSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'email')
 
 
-# Оставляем UserSerializer — совместимость с UserViewSet по умолчанию
 class UserSerializer(serializers.ModelSerializer):
     """Для обновления профиля (без пароля)."""
     class Meta:
         model = User
-        fields = ('id', 'email', 'phone', 'city', 'avatar')
+        fields = ('id', 'email', 'first_name', 'last_name', 'phone', 'city', 'avatar')
         read_only_fields = ('id', 'email')
 
 
@@ -65,6 +64,23 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
 
 class PaymentSerializer(serializers.ModelSerializer):
+    """Полная информация о платеже."""
+
     class Meta:
         model = Payment
-        fields = ('id', 'payment_date', 'amount', 'payment_method', 'course', 'lesson')
+        fields = (
+            'id', 'payment_date', 'amount', 'payment_method',
+            'course', 'lesson',
+            'stripe_product_id', 'stripe_price_id', 'stripe_session_id',
+            'payment_link', 'status',
+        )
+        read_only_fields = (
+            'id',
+            'stripe_product_id', 'stripe_price_id', 'stripe_session_id',
+            'payment_link', 'status',
+        )
+
+
+class PaymentCreateSerializer(serializers.Serializer):
+    """Данные для создания платежа по курсу."""
+    course_id = serializers.IntegerField()
